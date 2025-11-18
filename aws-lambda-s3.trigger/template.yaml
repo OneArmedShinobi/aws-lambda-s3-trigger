@@ -1,0 +1,121 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Lambda S3 Trigger Example con SNS
+
+Resources:
+  # Bucket S3
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'lambda-s3-trigger-demo-${AWS::AccountId}'
+
+  # Topic SNS
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: PortfolioNotifications
+
+  # Ruolo IAM per Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LambdaS3SNSExecutionRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaS3SNSPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource: !Sub "arn:aws:s3:::lambda-s3-trigger-demo-${AWS::AccountId}*"
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref SNSTopic
+
+  # Lambda Function
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: lambda-s3-trigger-demo
+      Runtime: python3.13
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !Ref SNSTopic
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import os
+
+          sns = boto3.client('sns')
+          s3 = boto3.client('s3')
+
+          TOPIC_ARN = os.environ['SNS_TOPIC_ARN']
+
+          def lambda_handler(event, context):
+              try:
+                  print("Evento ricevuto:", json.dumps(event))
+                  bucket = event['Records'][0]['s3']['bucket']['name']
+                  key = event['Records'][0]['s3']['object']['key']
+
+                  response = s3.get_object(Bucket=bucket, Key=key)
+                  file_size = response['ContentLength']
+                  print(f"File ricevuto: {key} dal bucket: {bucket}, dimensione: {file_size} bytes")
+
+                  message = f"Lambda completata con successo! File {key} di {file_size} bytes elaborato."
+                  sns.publish(
+                      TopicArn=TOPIC_ARN,
+                      Message=message,
+                      Subject='Lambda Execution Success'
+                  )
+
+                  return {
+                      'statusCode': 200,
+                      'body': json.dumps(f'File {key} elaborato con successo!')
+                  }
+
+              except Exception as e:
+                  sns.publish(
+                      TopicArn=TOPIC_ARN,
+                      Message=f"Lambda fallita: {str(e)}",
+                      Subject='Lambda Execution Failure'
+                  )
+                  raise
+
+  # Permessi Lambda per S3
+  BucketPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref LambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !GetAtt S3Bucket.Arn
+
+# Trigger S3 -> Lambda
+BucketNotification:
+  Type: AWS::S3::BucketNotification
+  DependsOn: BucketPermission
+  Properties:
+    Bucket: !Ref S3Bucket
+    NotificationConfiguration:
+      LambdaConfigurations:
+        - Event: "s3:ObjectCreated:*"
+          Function: !GetAtt LambdaFunction.Arn
