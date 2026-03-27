@@ -1,5 +1,6 @@
  ---**AWS Lambda S3 Trigger con SNS**---
 
+![Architecture Diagram](./diagram.png)
 
 - Overview:
 
@@ -51,9 +52,6 @@ Errore --> email con oggetto: Lambda Execution Failure
 
 Il messaggio contiene il nome del file e la sua dimensione, mostrando che la Lambda ha processato correttamente l’evento.
 
-- Diagramma:
-
-![Architecture Diagram](./diagram.png)
 
 - Riassunto:
 
